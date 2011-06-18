@@ -8,6 +8,16 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from tastypie.http import HttpUnauthorized
 
+from oauth2 import Error
+
+from django.utils.translation import ugettext as _
+
+from tastypie.authentication import Authentication
+
+from oauth_provider.utils import initialize_server_request, send_oauth_error, get_oauth_request
+from oauth_provider.consts import OAUTH_PARAMETERS_NAMES
+from oauth_provider.store import store, InvalidTokenError
+
 try:
     from hashlib import sha1
 except ImportError:
@@ -273,3 +283,47 @@ class DigestAuthentication(Authentication):
                 return request.user.username
         
         return 'nouser'
+
+
+class OAuthAuthentication(Authentication):
+
+    def is_authenticated(self, request, **kwargs):
+        if self.is_valid_request(request):
+            oauth_request = get_oauth_request(request)
+            consumer = store.get_consumer(request, oauth_request,
+                            oauth_request.get_parameter('oauth_consumer_key'))
+            try:
+                token = store.get_access_token(request, oauth_request,
+                                consumer, oauth_request.get_parameter('oauth_token'))
+            except InvalidTokenError:
+                return send_oauth_error(Error(_('Invalid access token: %s') % oauth_request.get_parameter('oauth_token')))
+
+            try:
+                parameters = self.validate_token(request, consumer, token)
+            except Error, e:
+                return send_oauth_error(e)
+
+            if consumer and token:
+                request.user = token.user
+                return True
+
+            return send_oauth_error(Error(_('You are not allowed to access this resource.')))
+
+        return send_oauth_error(Error(_('Invalid request parameters.')))
+
+    @staticmethod
+    def is_valid_request(request):
+        """
+        Checks whether the required parameters are either in
+        the http-authorization header sent by some clients,
+        which is by the way the preferred method according to
+        OAuth spec, but otherwise fall back to `GET` and `POST`.
+        """
+        is_in = lambda l: all((p in l) for p in OAUTH_PARAMETERS_NAMES)
+        auth_params = request.META.get("HTTP_AUTHORIZATION", [])
+        return is_in(auth_params) or is_in(request.REQUEST)
+
+    @staticmethod
+    def validate_token(request, consumer, token):
+        oauth_server, oauth_request = initialize_server_request(request)
+        return oauth_server.verify_request(oauth_request, consumer, token)
