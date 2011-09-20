@@ -12,8 +12,6 @@ from oauth2 import Error
 
 from django.utils.translation import ugettext as _
 
-from tastypie.authentication import Authentication
-
 from oauth_provider.utils import initialize_server_request, send_oauth_error, get_oauth_request
 from oauth_provider.consts import OAUTH_PARAMETERS_NAMES
 from oauth_provider.store import store, InvalidTokenError
